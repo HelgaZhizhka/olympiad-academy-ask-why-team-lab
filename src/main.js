@@ -119,8 +119,9 @@ async function showLab() {
           <label class="radio"><input type="radio" name="state" value="after_full_walkthrough" /> After the full walkthrough</label>
         </fieldset>
         <label>Question in Uzbek (Latin)
-          <textarea id="question" maxlength="500">Nega bu qadamni qilish kerakligini sodda qilib tushuntirib bera olasizmi?</textarea>
+          <textarea id="question" maxlength="500" placeholder="Masalan: Nega 24 ni 36 ga ko'paytiramiz?"></textarea>
         </label>
+        <p class="muted">Ask about one specific operation or a visible solution step.</p>
         <button id="ask" type="submit">Ask Why</button>
       </form>
     </section>
