@@ -1,0 +1,15 @@
+:root { color: #111; background: #f4f4f4; font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0; display: grid; gap: 16px; }
+.card { padding: 20px; border: 1px solid #ccc; background: #fff; }
+.narrow { max-width: 480px; }
+h1, h2 { margin: 0 0 8px; } h1 { font-size: 1.55rem; } h2 { font-size: 1.15rem; }
+.eyebrow { margin: 0 0 4px; color: #555; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; }
+.muted { color: #666; } .error { border-left: 4px solid #a00; } .hidden { display: none; }
+.header-row { display: flex; align-items: start; justify-content: space-between; gap: 16px; } .align-right { text-align: right; }
+label { display: block; margin-top: 12px; font-weight: 600; } input, textarea, select { display: block; width: 100%; margin-top: 5px; padding: 10px; font: inherit; border: 1px solid #aaa; background: #fff; }
+textarea { min-height: 120px; resize: vertical; } fieldset { margin: 0; border: 1px solid #ccc; } legend { padding: 0 4px; } .radio { font-weight: 400; } .radio input { width: auto; display: inline; margin-right: 6px; }
+button { margin-top: 16px; padding: 10px 16px; border: 1px solid #111; background: #111; color: white; font: inherit; cursor: pointer; } button.secondary { margin-top: 0; background: white; color: #111; } button:disabled { opacity: .6; cursor: wait; }
+.statement { font-size: 1.1rem; white-space: pre-wrap; } .response { border-left: 4px solid #111; padding-left: 12px; white-space: pre-wrap; } .tag { display: inline-block; padding: 2px 6px; border: 1px solid #aaa; font-size: .8rem; color: #555; }
+@media (max-width: 540px) { .header-row { display: block; } .align-right { text-align: left; } }
