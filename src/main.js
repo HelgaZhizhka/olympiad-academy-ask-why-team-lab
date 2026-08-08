@@ -1,4 +1,4 @@
-import { getUser, handleAuthCallback, login, logout } from '@netlify/identity';
+import { acceptInvite, getUser, handleAuthCallback, login, logout } from '@netlify/identity';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -48,6 +48,38 @@ function showLogin(error = '') {
       await showLab();
     } catch {
       showLogin('Could not sign in. Check the invitation, email, and password.');
+    }
+  });
+}
+
+function showAcceptInvite(token, error = '') {
+  app.innerHTML = `
+    <section class="card intro">
+      <p class="eyebrow">Olympiad Academy · Internal</p>
+      <h1>Set your password</h1>
+      <p>Your team invitation has been verified. Create a password for this Ask Why Lab account.</p>
+    </section>
+    <section class="card narrow">
+      ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
+      <form id="invite-form">
+        <label>New password <input id="new-password" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <label>Repeat password <input id="confirm-password" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <button type="submit">Create account</button>
+      </form>
+    </section>`;
+
+  document.querySelector('#invite-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const password = document.querySelector('#new-password').value;
+    const confirmation = document.querySelector('#confirm-password').value;
+    if (password !== confirmation) return showAcceptInvite(token, 'The passwords do not match.');
+    const button = event.currentTarget.querySelector('button');
+    button.disabled = true;
+    try {
+      await acceptInvite(token, password);
+      await showLab();
+    } catch {
+      showAcceptInvite(token, 'Could not create the account. Try a longer password or request a new invitation.');
     }
   });
 }
@@ -138,5 +170,13 @@ async function showLab() {
   });
 }
 
-await handleAuthCallback();
-await showLab();
+try {
+  const callback = await handleAuthCallback();
+  if (callback?.type === 'invite' && callback.token) {
+    showAcceptInvite(callback.token);
+  } else {
+    await showLab();
+  }
+} catch {
+  showLogin('Identity is unavailable or the invitation link has expired.');
+}
