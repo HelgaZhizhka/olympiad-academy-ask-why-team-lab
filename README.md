@@ -8,7 +8,7 @@ prototype.
 
 - invited team members sign in through Netlify Identity;
 - the server exposes only the visible task statement to the browser;
-- the server holds the OpenRouter key, private prompt, canonical answer, and
+- the server holds the OpenRouter key, versioned private prompt, canonical answer, and
   teacher-reviewed solution steps;
 - the model call is `google/gemma-4-26b-a4b-it:free` unless overridden;
 - server validation rejects empty, Cyrillic, or more-than-two-sentence replies;
@@ -29,9 +29,14 @@ not a production backend and must not be used with children.
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Yes | Server-only key; never use a `VITE_` prefix. |
-| `ASK_WHY_LAB_SYSTEM_PROMPT` | Yes | Private current Ask Why policy prompt. |
 | `ASK_WHY_LAB_TASKS_JSON` | Yes | Private teacher-approved task context. |
 | `ASK_WHY_LAB_MODEL` | No | Defaults to `google/gemma-4-26b-a4b-it:free`. |
+
+The evaluated prompt is the versioned private source file
+[`prompts/ask-why.post-completion.v5.mjs`](./prompts/ask-why.post-completion.v5.mjs).
+The Netlify function imports it directly. Do **not** set
+`ASK_WHY_LAB_SYSTEM_PROMPT`: an environment copy could drift away from the
+prompt used in regression tests.
 
 `ASK_WHY_LAB_TASKS_JSON` must be a JSON array. Do not commit it:
 

@@ -1,4 +1,8 @@
 import { getUser } from '@netlify/identity';
+import {
+  ASK_WHY_POST_COMPLETION_PROMPT_V5,
+  ASK_WHY_PROMPT_VERSION,
+} from '../../prompts/ask-why.post-completion.v5.mjs';
 
 const DEFAULT_MODEL = 'google/gemma-4-26b-a4b-it:free';
 const FALLBACK_REPLY =
@@ -73,8 +77,7 @@ export default async (request) => {
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const prompt = process.env.ASK_WHY_LAB_SYSTEM_PROMPT;
-  if (!apiKey || !prompt) return json(503, { error: 'The private model configuration is missing.' });
+  if (!apiKey) return json(503, { error: 'The private model configuration is missing.' });
   const model = process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL;
   const context = {
     product_state: completionState,
@@ -99,7 +102,10 @@ export default async (request) => {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: `${prompt}\n\nCurrent server-side context:\n${JSON.stringify(context)}` },
+          {
+            role: 'system',
+            content: `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`,
+          },
           { role: 'user', content: question },
         ],
         temperature: 0,
