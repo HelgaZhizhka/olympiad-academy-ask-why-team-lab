@@ -168,8 +168,11 @@ async function handleAskWhy(request, response, session) {
     return sendJson(response, 400, { error: 'Choose a valid learner state.' });
   }
 
-  const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY;
-  if (!apiKey) return sendJson(response, 503, { error: 'The private model configuration is missing.' });
+  const googleKey = process.env.GOOGLE_AI_STUDIO_API_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (!googleKey && !openRouterKey) {
+    return sendJson(response, 503, { error: 'The private model configuration is missing.' });
+  }
   // Accept both the Google AI Studio name and a leftover OpenRouter-style name.
   const model = (process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL)
     .replace(/^google\//u, '')
@@ -186,46 +189,86 @@ async function handleAskWhy(request, response, session) {
     },
     requested_language: 'uz-Latn',
   };
+  const systemContent = `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`;
 
-  try {
-    const abort = new AbortController();
-    const timeout = setTimeout(() => abort.abort(), 30_000);
-    const modelResponse = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        signal: abort.signal,
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: 'system',
-              content: `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`,
-            },
-            { role: 'user', content: question },
-          ],
-          temperature: 0,
-          max_tokens: 300,
-        }),
-      },
-    );
-    clearTimeout(timeout);
-    if (!modelResponse.ok) {
-      console.info('ask-why fallback', { user: session.email, reason: 'provider_error', status: modelResponse.status });
-      return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
+  const providers = [];
+  if (googleKey) providers.push({ name: 'google', call: () => callGoogle(googleKey, model, systemContent, question) });
+  if (openRouterKey) providers.push({ name: 'openrouter', call: () => callOpenRouter(openRouterKey, model, systemContent, question) });
+
+  for (const provider of providers) {
+    let reply;
+    try {
+      reply = await provider.call();
+    } catch (error) {
+      console.info('ask-why provider failed', {
+        user: session.email,
+        provider: provider.name,
+        reason: error instanceof Error ? error.message : 'unknown_error',
+      });
+      continue;
     }
-    const payload = await modelResponse.json();
-    const reply = payload?.choices?.[0]?.message?.content;
     if (typeof reply !== 'string' || !isSafeReply(reply)) {
-      console.info('ask-why fallback', { user: session.email, reason: 'response_validation_failed' });
+      console.info('ask-why fallback', { user: session.email, provider: provider.name, reason: 'response_validation_failed' });
       return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
     }
     return sendJson(response, 200, { reply: reply.trim(), status: 'ok' });
-  } catch (error) {
-    console.info('ask-why fallback', { user: session.email, reason: error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'network_error' });
-    return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
   }
+  console.info('ask-why fallback', { user: session.email, reason: 'all_providers_failed' });
+  return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
+}
+
+async function fetchWithTimeout(url, options) {
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 30_000);
+  try {
+    return await fetch(url, { ...options, signal: abort.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Native Gemini API. Gemma models reject a separate system instruction, so the
+// policy prompt and the learner message travel in a single user turn — the
+// OpenAI-compatible route merged them into one Gemma template the same way.
+async function callGoogle(apiKey, model, systemContent, question) {
+  const response = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `${systemContent}\n\nLearner message:\n${question}` }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 300 },
+      }),
+    },
+  );
+  if (!response.ok) throw new Error(`google_http_${response.status}`);
+  const payload = await response.json();
+  const reply = payload?.candidates?.[0]?.content?.parts?.map((part) => part?.text ?? '').join('');
+  if (typeof reply !== 'string' || !reply) throw new Error('google_empty_reply');
+  return reply;
+}
+
+async function callOpenRouter(apiKey, model, systemContent, question) {
+  const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: `google/${model}:free`,
+      messages: [
+        { role: 'system', content: systemContent },
+        { role: 'user', content: question },
+      ],
+      temperature: 0,
+      max_tokens: 300,
+      provider: { data_collection: 'deny' },
+    }),
+  });
+  if (!response.ok) throw new Error(`openrouter_http_${response.status}`);
+  const payload = await response.json();
+  const reply = payload?.choices?.[0]?.message?.content;
+  if (typeof reply !== 'string' || !reply) throw new Error('openrouter_empty_reply');
+  return reply;
 }
 
 async function serveStatic(request, response) {

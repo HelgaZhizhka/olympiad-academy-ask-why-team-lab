@@ -35,7 +35,8 @@ automatically.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `GOOGLE_AI_STUDIO_API_KEY` | Yes | Server-only key; never use a `VITE_` prefix. |
+| `GOOGLE_AI_STUDIO_API_KEY` | One of the two keys | Tried first; native Gemini API. |
+| `OPENROUTER_API_KEY` | One of the two keys | Automatic fallback via the OpenRouter `:free` pool. |
 | `ASK_WHY_LAB_TASKS_JSON` | Yes | Private teacher-approved task context. |
 | `TEAM_ACCESS_CODE` | Yes | Shared sign-in code for the team; rotate it to revoke access. |
 | `SESSION_SECRET` | No | Cookie-signing secret; without it sessions reset on redeploy. |
