@@ -8,9 +8,10 @@ prototype.
 
 - invited team members sign in through Netlify Identity;
 - the server exposes only the visible task statement to the browser;
-- the server holds the OpenRouter key, versioned private prompt, canonical answer, and
-  teacher-reviewed solution steps;
-- the model call is `google/gemma-4-26b-a4b-it:free` unless overridden;
+- the server holds the Google AI Studio key, versioned private prompt, canonical answer,
+  and teacher-reviewed solution steps;
+- the model call is `gemma-4-26b-a4b-it` on the Google AI Studio free tier unless
+  overridden;
 - server validation rejects empty, Cyrillic, or more-than-two-sentence replies;
 - a failed validation, timeout, or provider error shows a neutral Uzbek retry;
 - each signed-in reviewer has an in-memory limit of 30 model calls per hour.
@@ -28,9 +29,9 @@ not a production backend and must not be used with children.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | Yes | Server-only key; never use a `VITE_` prefix. |
+| `GOOGLE_AI_STUDIO_API_KEY` | Yes | Server-only key; never use a `VITE_` prefix. |
 | `ASK_WHY_LAB_TASKS_JSON` | Yes | Private teacher-approved task context. |
-| `ASK_WHY_LAB_MODEL` | No | Defaults to `google/gemma-4-26b-a4b-it:free`. |
+| `ASK_WHY_LAB_MODEL` | No | Defaults to `gemma-4-26b-a4b-it`; OpenRouter-style names are normalised. |
 
 The evaluated prompt is the versioned private source file
 [`prompts/ask-why.post-completion.v5.mjs`](./prompts/ask-why.post-completion.v5.mjs).

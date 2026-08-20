@@ -4,7 +4,7 @@ import {
   ASK_WHY_PROMPT_VERSION,
 } from '../../prompts/ask-why.post-completion.v5.mjs';
 
-const DEFAULT_MODEL = 'google/gemma-4-26b-a4b-it:free';
+const DEFAULT_MODEL = 'gemma-4-26b-a4b-it';
 const FALLBACK_REPLY =
   "Uzr, hozir qisqa tushuntirish bera olmadim. Savolni masaladagi aniq bir qadam haqida boshqacha qilib yozib ko'ring.";
 const MAX_REQUESTS_PER_HOUR = 30;
@@ -76,9 +76,12 @@ export default async (request) => {
     return json(400, { error: 'Choose a valid learner state.' });
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY;
   if (!apiKey) return json(503, { error: 'The private model configuration is missing.' });
-  const model = process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL;
+  // Accept both the Google AI Studio name and a leftover OpenRouter-style name.
+  const model = (process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL)
+    .replace(/^google\//u, '')
+    .replace(/:free$/u, '');
   const context = {
     product_state: completionState,
     task: {
@@ -95,25 +98,26 @@ export default async (request) => {
   try {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(), 30_000);
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      signal: abort.signal,
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'system',
-            content: `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`,
-          },
-          { role: 'user', content: question },
-        ],
-        temperature: 0,
-        max_tokens: 300,
-        reasoning: { effort: 'none' },
-        provider: { data_collection: 'deny', allow_fallbacks: false },
-      }),
-    });
+    const response = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: abort.signal,
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content: `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`,
+            },
+            { role: 'user', content: question },
+          ],
+          temperature: 0,
+          max_tokens: 300,
+        }),
+      },
+    );
     clearTimeout(timeout);
     if (!response.ok) {
       console.info('ask-why fallback', { user: user.email, reason: 'provider_error', status: response.status });
