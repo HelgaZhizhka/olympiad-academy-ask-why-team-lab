@@ -1,4 +1,3 @@
-import { acceptInvite, getUser, handleAuthCallback, login, logout } from '@netlify/identity';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -15,7 +14,11 @@ function escapeHtml(value) {
 async function request(path, options) {
   const response = await fetch(path, { credentials: 'same-origin', ...options });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error ?? 'Request failed.');
+  if (!response.ok) {
+    const error = new Error(body.error ?? 'Request failed.');
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -28,11 +31,11 @@ function showLogin(error = '') {
     </section>
     <section class="card narrow">
       <h2>Team sign in</h2>
-      <p class="muted">Access is invite-only. Use the email address to which you received the Netlify invitation.</p>
+      <p class="muted">Access is limited to the team. Use your work email and the shared team access code.</p>
       ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
       <form id="login-form">
         <label>Email <input id="email" type="email" autocomplete="email" required /></label>
-        <label>Password <input id="password" type="password" autocomplete="current-password" required /></label>
+        <label>Team access code <input id="code" type="password" autocomplete="current-password" required /></label>
         <button type="submit">Sign in</button>
       </form>
     </section>`;
@@ -40,58 +43,28 @@ function showLogin(error = '') {
   document.querySelector('#login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const email = document.querySelector('#email').value.trim();
-    const password = document.querySelector('#password').value;
+    const code = document.querySelector('#code').value;
     const button = event.currentTarget.querySelector('button');
     button.disabled = true;
     try {
-      await login(email, password);
+      await request('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
       await showLab();
     } catch {
-      showLogin('Could not sign in. Check the invitation, email, and password.');
-    }
-  });
-}
-
-function showAcceptInvite(token, error = '') {
-  app.innerHTML = `
-    <section class="card intro">
-      <p class="eyebrow">Olympiad Academy · Internal</p>
-      <h1>Set your password</h1>
-      <p>Your team invitation has been verified. Create a password for this Ask Why Lab account.</p>
-    </section>
-    <section class="card narrow">
-      ${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
-      <form id="invite-form">
-        <label>New password <input id="new-password" type="password" autocomplete="new-password" minlength="8" required /></label>
-        <label>Repeat password <input id="confirm-password" type="password" autocomplete="new-password" minlength="8" required /></label>
-        <button type="submit">Create account</button>
-      </form>
-    </section>`;
-
-  document.querySelector('#invite-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const password = document.querySelector('#new-password').value;
-    const confirmation = document.querySelector('#confirm-password').value;
-    if (password !== confirmation) return showAcceptInvite(token, 'The passwords do not match.');
-    const button = event.currentTarget.querySelector('button');
-    button.disabled = true;
-    try {
-      await acceptInvite(token, password);
-      await showLab();
-    } catch {
-      showAcceptInvite(token, 'Could not create the account. Try a longer password or request a new invitation.');
+      showLogin('Could not sign in. Check the email and the team access code.');
     }
   });
 }
 
 async function showLab() {
-  const user = await getUser();
-  if (!user) return showLogin();
-
   let data;
   try {
-    data = await request('/.netlify/functions/ask-why-lab');
+    data = await request('/api/ask-why-lab');
   } catch (error) {
+    if (error.status === 401) return showLogin();
     return showLogin(error instanceof Error ? error.message : 'Could not verify access.');
   }
 
@@ -99,7 +72,7 @@ async function showLab() {
   app.innerHTML = `
     <section class="card header-row">
       <div><p class="eyebrow">Olympiad Academy · Internal</p><h1>Ask Why Lab</h1></div>
-      <div class="align-right"><p class="muted">${escapeHtml(user.email ?? '')}</p><button id="logout" class="secondary">Sign out</button></div>
+      <div class="align-right"><p class="muted">${escapeHtml(data.email ?? '')}</p><button id="logout" class="secondary">Sign out</button></div>
     </section>
     <section class="card">
       <p>This lab sends one Uzbek question to the currently configured model after a learner has completed the task. It stores neither the question nor the reply.</p>
@@ -138,7 +111,10 @@ async function showLab() {
   const renderTask = () => { statement.textContent = selectedTask()?.statement ?? ''; };
   renderTask();
   taskSelect.addEventListener('change', renderTask);
-  document.querySelector('#logout').addEventListener('click', async () => { await logout(); showLogin(); });
+  document.querySelector('#logout').addEventListener('click', async () => {
+    await request('/api/logout', { method: 'POST' }).catch(() => {});
+    showLogin();
+  });
 
   document.querySelector('#ask-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -153,7 +129,7 @@ async function showLab() {
         completionState: new FormData(event.currentTarget).get('state'),
         question: document.querySelector('#question').value.trim(),
       };
-      const data = await request('/.netlify/functions/ask-why-lab', {
+      const data = await request('/api/ask-why-lab', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -162,6 +138,7 @@ async function showLab() {
       replyStatus.textContent = data.status === 'ok' ? 'shown to reviewer' : 'safe fallback';
       result.classList.remove('hidden');
     } catch (caught) {
+      if (caught?.status === 401) return showLogin('Your session expired. Sign in again.');
       error.textContent = caught instanceof Error ? caught.message : 'The model request failed.';
       error.classList.remove('hidden');
     } finally {
@@ -171,13 +148,4 @@ async function showLab() {
   });
 }
 
-try {
-  const callback = await handleAuthCallback();
-  if (callback?.type === 'invite' && callback.token) {
-    showAcceptInvite(callback.token);
-  } else {
-    await showLab();
-  }
-} catch {
-  showLogin('Identity is unavailable or the invitation link has expired.');
-}
+await showLab();

@@ -4,9 +4,13 @@ An internal, invite-only test surface for the selected free Uzbek Ask Why model.
 It is deliberately separate from both the production application and the public
 prototype.
 
+This branch (`railway`) runs as a single small Node server on Railway. The
+`codex/secure-ask-why-lab` branch keeps the previous Netlify Identity variant.
+
 ## What it does
 
-- invited team members sign in through Netlify Identity;
+- team members sign in with their email and a shared team access code;
+- the session lives in a signed, HttpOnly cookie;
 - the server exposes only the visible task statement to the browser;
 - the server holds the Google AI Studio key, versioned private prompt, canonical answer,
   and teacher-reviewed solution steps;
@@ -19,25 +23,28 @@ prototype.
 It does **not** store questions, responses, child data, or chat history. It is
 not a production backend and must not be used with children.
 
-## Netlify setup
+## Railway setup
 
-1. Create a **new, private** Netlify project from this repository.
-2. In **Project configuration → Identity**, enable Identity.
-3. In **Identity → Registration**, choose **Invite only**.
-4. In **Identity → Users**, invite the team members who should test the lab.
-5. Add the environment variables below, then redeploy.
+1. Create a new Railway project → **Deploy from GitHub repo** → pick this
+   repository and the `railway` branch.
+2. Add the environment variables below.
+3. In **Settings → Networking**, generate a public domain.
+
+Railway builds with `npm install && npm run build` and starts `npm start`
+automatically.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `GOOGLE_AI_STUDIO_API_KEY` | Yes | Server-only key; never use a `VITE_` prefix. |
 | `ASK_WHY_LAB_TASKS_JSON` | Yes | Private teacher-approved task context. |
+| `TEAM_ACCESS_CODE` | Yes | Shared sign-in code for the team; rotate it to revoke access. |
+| `SESSION_SECRET` | No | Cookie-signing secret; without it sessions reset on redeploy. |
 | `ASK_WHY_LAB_MODEL` | No | Defaults to `gemma-4-26b-a4b-it`; OpenRouter-style names are normalised. |
 
 The evaluated prompt is the versioned private source file
 [`prompts/ask-why.post-completion.v5.mjs`](./prompts/ask-why.post-completion.v5.mjs).
-The Netlify function imports it directly. Do **not** set
-`ASK_WHY_LAB_SYSTEM_PROMPT`: an environment copy could drift away from the
-prompt used in regression tests.
+The server imports it directly. Do **not** set `ASK_WHY_LAB_SYSTEM_PROMPT`: an
+environment copy could drift away from the prompt used in regression tests.
 
 `ASK_WHY_LAB_TASKS_JSON` must be a JSON array. Do not commit it:
 
@@ -53,12 +60,12 @@ prompt used in regression tests.
 ]
 ```
 
-## Local build
+## Local run
 
 ```bash
 npm install
 npm run build
+TEAM_ACCESS_CODE=dev GOOGLE_AI_STUDIO_API_KEY=... ASK_WHY_LAB_TASKS_JSON='[...]' npm start
 ```
 
-Identity and the protected function require a Netlify HTTPS deployment. The
-local lab remains the quickest way to test with the existing private content.
+The lab is then available on http://localhost:3000.
