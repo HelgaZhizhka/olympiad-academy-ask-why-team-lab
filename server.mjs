@@ -227,9 +227,9 @@ async function fetchWithTimeout(url, options) {
   }
 }
 
-// Native Gemini API. Gemma models reject a separate system instruction, so the
-// policy prompt and the learner message travel in a single user turn — the
-// OpenAI-compatible route merged them into one Gemma template the same way.
+// Native Gemini API. Gemma 4 reasons in-band and cannot disable thinking, so
+// the learner-facing reply is only the parts not flagged `thought`; the token
+// budget must also cover the thinking that precedes the reply.
 async function callGoogle(apiKey, model, systemContent, question) {
   const response = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -237,14 +237,18 @@ async function callGoogle(apiKey, model, systemContent, question) {
       method: 'POST',
       headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `${systemContent}\n\nLearner message:\n${question}` }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 300 },
+        system_instruction: { parts: [{ text: systemContent }] },
+        contents: [{ role: 'user', parts: [{ text: question }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 2048 },
       }),
     },
   );
   if (!response.ok) throw new Error(`google_http_${response.status}`);
   const payload = await response.json();
-  const reply = payload?.candidates?.[0]?.content?.parts?.map((part) => part?.text ?? '').join('');
+  const reply = payload?.candidates?.[0]?.content?.parts
+    ?.filter((part) => !part?.thought)
+    .map((part) => part?.text ?? '')
+    .join('');
   if (typeof reply !== 'string' || !reply) throw new Error('google_empty_reply');
   return reply;
 }
