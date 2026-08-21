@@ -217,9 +217,9 @@ async function handleAskWhy(request, response, session) {
   return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
 }
 
-async function fetchWithTimeout(url, options) {
+async function fetchWithTimeout(url, options, timeoutMs = 30_000) {
   const abort = new AbortController();
-  const timeout = setTimeout(() => abort.abort(), 30_000);
+  const timeout = setTimeout(() => abort.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: abort.signal });
   } finally {
@@ -242,6 +242,7 @@ async function callGoogle(apiKey, model, systemContent, question) {
         generationConfig: { temperature: 0, maxOutputTokens: 2048 },
       }),
     },
+    60_000,
   );
   if (!response.ok) throw new Error(`google_http_${response.status}`);
   const payload = await response.json();
