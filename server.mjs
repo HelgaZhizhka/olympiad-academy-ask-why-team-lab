@@ -8,7 +8,7 @@ import {
   ASK_WHY_PROMPT_VERSION,
 } from './prompts/ask-why.post-completion.v5.mjs';
 
-const DEFAULT_MODEL = 'gemma-4-26b-a4b-it';
+const DEFAULT_MODEL = 'google/gemma-4-26b-a4b-it';
 const FALLBACK_REPLY =
   "Uzr, hozir qisqa tushuntirish bera olmadim. Savolni masaladagi aniq bir qadam haqida boshqacha qilib yozib ko'ring.";
 const MAX_REQUESTS_PER_HOUR = 30;
@@ -107,6 +107,10 @@ function sameOrigin(request) {
   try { return new URL(origin).host === request.headers.host; } catch { return false; }
 }
 function publicTask(task) { return { id: task.id, label: task.label, statement: task.statement }; }
+function configuredModel() {
+  const value = (process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL).replace(/:free$/u, '');
+  return value.includes('/') ? value : `google/${value}`;
+}
 
 function sendJson(response, status, body, extraHeaders = {}) {
   response.writeHead(status, {
@@ -150,7 +154,15 @@ async function handleAskWhy(request, response, session) {
   if (taskList.length === 0) return sendJson(response, 503, { error: 'The lab task context is not configured.' });
 
   if (request.method === 'GET') {
-    return sendJson(response, 200, { email: session.email, tasks: taskList.map(publicTask) });
+    return sendJson(response, 200, {
+      email: session.email,
+      tasks: taskList.map(publicTask),
+      configuration: {
+        gateway: 'OpenRouter',
+        model: configuredModel(),
+        route: 'paid',
+      },
+    });
   }
   if (request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
   if (!canMakeRequest(session.email)) {
@@ -168,15 +180,14 @@ async function handleAskWhy(request, response, session) {
     return sendJson(response, 400, { error: 'Choose a valid learner state.' });
   }
 
-  const googleKey = process.env.GOOGLE_AI_STUDIO_API_KEY;
   const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (!googleKey && !openRouterKey) {
-    return sendJson(response, 503, { error: 'The private model configuration is missing.' });
+  if (!openRouterKey) {
+    return sendJson(response, 503, { error: 'The OpenRouter model configuration is missing.' });
   }
-  // Accept both the Google AI Studio name and a leftover OpenRouter-style name.
-  const model = (process.env.ASK_WHY_LAB_MODEL?.trim() || DEFAULT_MODEL)
-    .replace(/^google\//u, '')
-    .replace(/:free$/u, '');
+  // The lab intentionally tests the paid OpenRouter route. A leftover `:free`
+  // suffix is stripped so the deployment cannot silently test a different
+  // availability tier than the one shown to reviewers.
+  const model = configuredModel();
   const context = {
     product_state: completionState,
     task: {
@@ -191,30 +202,53 @@ async function handleAskWhy(request, response, session) {
   };
   const systemContent = `${ASK_WHY_POST_COMPLETION_PROMPT_V5}\n\nPrompt version: ${ASK_WHY_PROMPT_VERSION}\n\nCurrent server-side context:\n${JSON.stringify(context)}`;
 
-  const providers = [];
-  if (googleKey) providers.push({ name: 'google', call: () => callGoogle(googleKey, model, systemContent, question) });
-  if (openRouterKey) providers.push({ name: 'openrouter', call: () => callOpenRouter(openRouterKey, model, systemContent, question) });
-
-  for (const provider of providers) {
-    let reply;
-    try {
-      reply = await provider.call();
-    } catch (error) {
-      console.info('ask-why provider failed', {
-        user: session.email,
-        provider: provider.name,
-        reason: error instanceof Error ? error.message : 'unknown_error',
-      });
-      continue;
-    }
-    if (typeof reply !== 'string' || !isSafeReply(reply)) {
-      console.info('ask-why fallback', { user: session.email, provider: provider.name, reason: 'response_validation_failed' });
-      return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
-    }
-    return sendJson(response, 200, { reply: reply.trim(), status: 'ok' });
+  const startedAt = performance.now();
+  let result;
+  try {
+    result = await callOpenRouter(openRouterKey, model, systemContent, question);
+  } catch (error) {
+    console.info('ask-why provider failed', {
+      user: session.email,
+      provider: 'openrouter',
+      model,
+      reason: error instanceof Error ? error.message : 'unknown_error',
+    });
+    return sendJson(response, 200, {
+      reply: FALLBACK_REPLY,
+      status: 'fallback',
+      provider: 'openrouter',
+      model,
+      latency_ms: Math.round(performance.now() - startedAt),
+    });
   }
-  console.info('ask-why fallback', { user: session.email, reason: 'all_providers_failed' });
-  return sendJson(response, 200, { reply: FALLBACK_REPLY, status: 'fallback' });
+  const latencyMs = Math.round(performance.now() - startedAt);
+  if (!isSafeReply(result.reply)) {
+    console.info('ask-why fallback', {
+      user: session.email,
+      provider: 'openrouter',
+      upstream_provider: result.upstreamProvider,
+      model,
+      reason: 'response_validation_failed',
+    });
+    return sendJson(response, 200, {
+      reply: FALLBACK_REPLY,
+      status: 'fallback',
+      provider: 'openrouter',
+      upstream_provider: result.upstreamProvider,
+      model,
+      latency_ms: latencyMs,
+      usage: result.usage,
+    });
+  }
+  return sendJson(response, 200, {
+    reply: result.reply.trim(),
+    status: 'ok',
+    provider: 'openrouter',
+    upstream_provider: result.upstreamProvider,
+    model,
+    latency_ms: latencyMs,
+    usage: result.usage,
+  });
 }
 
 async function fetchWithTimeout(url, options, timeoutMs = 30_000) {
@@ -227,53 +261,34 @@ async function fetchWithTimeout(url, options, timeoutMs = 30_000) {
   }
 }
 
-// Native Gemini API. Gemma 4 reasons in-band and cannot disable thinking, so
-// the learner-facing reply is only the parts not flagged `thought`; the token
-// budget must also cover the thinking that precedes the reply.
-async function callGoogle(apiKey, model, systemContent, question) {
-  const response = await fetchWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: 'POST',
-      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemContent }] },
-        contents: [{ role: 'user', parts: [{ text: question }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 2048 },
-      }),
-    },
-    60_000,
-  );
-  if (!response.ok) throw new Error(`google_http_${response.status}`);
-  const payload = await response.json();
-  const reply = payload?.candidates?.[0]?.content?.parts
-    ?.filter((part) => !part?.thought)
-    .map((part) => part?.text ?? '')
-    .join('');
-  if (typeof reply !== 'string' || !reply) throw new Error('google_empty_reply');
-  return reply;
-}
-
 async function callOpenRouter(apiKey, model, systemContent, question) {
   const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: `google/${model}:free`,
+      model,
       messages: [
         { role: 'system', content: systemContent },
         { role: 'user', content: question },
       ],
       temperature: 0,
       max_tokens: 300,
-      provider: { data_collection: 'deny' },
+      provider: { data_collection: 'deny', allow_fallbacks: true },
     }),
   });
   if (!response.ok) throw new Error(`openrouter_http_${response.status}`);
   const payload = await response.json();
   const reply = payload?.choices?.[0]?.message?.content;
   if (typeof reply !== 'string' || !reply) throw new Error('openrouter_empty_reply');
-  return reply;
+  return {
+    reply,
+    upstreamProvider: typeof payload?.provider === 'string' ? payload.provider : undefined,
+    usage: {
+      input_tokens: Number.isFinite(payload?.usage?.prompt_tokens) ? payload.usage.prompt_tokens : undefined,
+      output_tokens: Number.isFinite(payload?.usage?.completion_tokens) ? payload.usage.completion_tokens : undefined,
+      cost_usd: Number.isFinite(payload?.usage?.cost) ? payload.usage.cost : undefined,
+    },
+  };
 }
 
 async function serveStatic(request, response) {

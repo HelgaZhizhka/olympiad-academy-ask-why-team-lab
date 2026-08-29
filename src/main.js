@@ -59,6 +59,25 @@ function showLogin(error = '') {
   });
 }
 
+function formatTelemetry(data) {
+  const route = data.upstream_provider
+    ? `OpenRouter → ${data.upstream_provider}`
+    : 'OpenRouter';
+  const model = data.model ?? 'unknown model';
+  const latency = Number.isFinite(data.latency_ms)
+    ? `${(data.latency_ms / 1000).toFixed(2)} s`
+    : 'time not reported';
+  const cost = Number.isFinite(data.usage?.cost_usd)
+    ? `$${data.usage.cost_usd.toFixed(6)}`
+    : 'cost not reported';
+  const inputTokens = data.usage?.input_tokens;
+  const outputTokens = data.usage?.output_tokens;
+  const tokens = Number.isFinite(inputTokens) && Number.isFinite(outputTokens)
+    ? ` · ${inputTokens} in / ${outputTokens} out tokens`
+    : '';
+  return `${route} · ${model} · ${latency} · ${cost}${tokens}`;
+}
+
 async function showLab() {
   let data;
   try {
@@ -69,13 +88,15 @@ async function showLab() {
   }
 
   const tasks = data.tasks ?? [];
+  const configuration = data.configuration ?? {};
   app.innerHTML = `
     <section class="card header-row">
       <div><p class="eyebrow">Olympiad Academy · Internal</p><h1>Ask Why Lab</h1></div>
       <div class="align-right"><p class="muted">${escapeHtml(data.email ?? '')}</p><button id="logout" class="secondary">Sign out</button></div>
     </section>
     <section class="card">
-      <p>This lab sends one Uzbek question to the currently configured model after a learner has completed the task. It stores neither the question nor the reply.</p>
+      <p>This lab sends one Uzbek question to the paid Gemma route through OpenRouter after a learner has completed the task. It stores neither the question nor the reply.</p>
+      <p class="configuration"><strong>Active route:</strong> ${escapeHtml(configuration.gateway ?? 'OpenRouter')} · ${escapeHtml(configuration.model ?? 'unknown model')} · ${escapeHtml(configuration.route ?? 'paid')}</p>
       <p class="muted">Review language, mathematical correctness, Grade 5 clarity, and whether the response stays focused on this task.</p>
     </section>
     <section class="card">
@@ -98,7 +119,11 @@ async function showLab() {
         <button id="ask" type="submit">Ask Why</button>
       </form>
     </section>
-    <section id="result" class="card hidden"><p><strong>Model response</strong> <span id="reply-status" class="tag"></span></p><p id="reply" class="response"></p></section>
+    <section id="result" class="card hidden">
+      <p><strong>Model response</strong> <span id="reply-status" class="tag"></span></p>
+      <p id="reply" class="response"></p>
+      <p id="reply-meta" class="telemetry"></p>
+    </section>
     <section id="error" class="card error hidden"></section>`;
 
   const taskSelect = document.querySelector('#task');
@@ -107,6 +132,7 @@ async function showLab() {
   const result = document.querySelector('#result');
   const reply = document.querySelector('#reply');
   const replyStatus = document.querySelector('#reply-status');
+  const replyMeta = document.querySelector('#reply-meta');
   const selectedTask = () => tasks.find((task) => task.id === taskSelect.value);
   const renderTask = () => { statement.textContent = selectedTask()?.statement ?? ''; };
   renderTask();
@@ -136,6 +162,7 @@ async function showLab() {
       });
       reply.textContent = data.reply;
       replyStatus.textContent = data.status === 'ok' ? 'shown to reviewer' : 'safe fallback';
+      replyMeta.textContent = formatTelemetry(data);
       result.classList.remove('hidden');
     } catch (caught) {
       if (caught?.status === 401) return showLogin('Your session expired. Sign in again.');
